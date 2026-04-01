@@ -246,9 +246,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-Và requirements.txt cập nhật thêm:
-python-telegram-bot==21.3
-motor==3.5.1
-pymongo==4.6.1
-flask==3.0.0
-requests==2.31.0
