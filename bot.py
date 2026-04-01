@@ -1,5 +1,4 @@
-
-# v2.0 DEMO BOT
+# v3.0 DEMO BOT
 import os
 import asyncio
 import random
@@ -29,6 +28,8 @@ albums_col = db["albums"]
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", "2")
         self.end_headers()
         self.wfile.write(b"OK")
     def log_message(self, format, *args):
@@ -44,6 +45,23 @@ def make_link(key):
 
 def gen_key(length=8):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+async def delete_after(bot, chat_id, message_ids, delay):
+    await asyncio.sleep(delay)
+    for mid in message_ids:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception as e:
+            logging.error(f"Delete error: {e}")
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text="⏰ Demo đã hết hạn rồi Ní ơi!\n\n"
+                 "Vào kênh để chọn link mới nhé:\n"
+                 "👉 " + CHANNEL_LINK
+        )
+    except Exception as e:
+        logging.error(f"Send expired msg error: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
@@ -92,21 +110,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Nội dung demo tự xóa sau 10 phút nhe! ⏳"
     )
     sent_ids.append(msg2.message_id)
-    asyncio.create_task(delete_after(context, chat_id, sent_ids, 600))
-
-async def delete_after(context, chat_id, message_ids, delay):
-    await asyncio.sleep(delay)
-    for mid in message_ids:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=mid)
-        except Exception as e:
-            logging.error(f"Delete error: {e}")
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text="⏰ Demo đã hết hạn rồi Ní ơi!\n\n"
-             "Vào kênh để chọn link mới nhé:\n"
-             "👉 " + CHANNEL_LINK
-    )
+    bot = context.bot
+    asyncio.ensure_future(delete_after(bot, chat_id, sent_ids, 600))
 
 async def new_album(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
