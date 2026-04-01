@@ -1,11 +1,13 @@
-# v3.0 DEMO BOT
+# v3.0 DEMO BOT - Ultra fix
 import os
 import asyncio
 import random
 import string
 import logging
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
+import requests
+from flask import Flask
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -20,25 +22,20 @@ ADMIN_ID = os.environ.get("ADMIN_ID", "0")
 ADMIN_ID = int(ADMIN_ID) if ADMIN_ID.isdigit() else 0
 MONGO_URI = os.environ.get("MONGO_URI", "")
 CHANNEL_LINK = "https://t.me/+rmpfiQeaToAyYzhl"
+PORT = int(os.environ.get("PORT", 8080))
 
 client = AsyncIOMotorClient(MONGO_URI)
 db = client["botdb_demo"]
 albums_col = db["albums"]
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", "2")
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, format, *args):
-        pass
+flask_app = Flask(__name__)
 
-def run_health_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    server.serve_forever()
+@flask_app.route("/")
+def index():
+    return "Bot is running!", 200
+
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=PORT)
 
 def make_link(key):
     return "https://t.me/khotailieu_A1_demo_bot?start=" + key
@@ -46,22 +43,20 @@ def make_link(key):
 def gen_key(length=8):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
-async def delete_after(bot, chat_id, message_ids, delay):
-    await asyncio.sleep(delay)
-    for mid in message_ids:
+def force_delete_webhook():
+    for attempt in range(5):
         try:
-            await bot.delete_message(chat_id=chat_id, message_id=mid)
+            url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true"
+            r = requests.get(url, timeout=10)
+            result = r.json()
+            logging.info(f"deleteWebhook attempt {attempt+1}: {result}")
+            if result.get("ok"):
+                time.sleep(5)
+                return True
         except Exception as e:
-            logging.error(f"Delete error: {e}")
-    try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text="⏰ Demo đã hết hạn rồi Ní ơi!\n\n"
-                 "Vào kênh để chọn link mới nhé:\n"
-                 "👉 " + CHANNEL_LINK
-        )
-    except Exception as e:
-        logging.error(f"Send expired msg error: {e}")
+            logging.error(f"deleteWebhook error: {e}")
+        time.sleep(3)
+    return False
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
@@ -106,12 +101,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent_ids.append(msg.message_id)
         except Exception as e:
             logging.error(f"Send error: {e}")
-    msg2 = await update.message.reply_text(
+    notice = await update.message.reply_text(
         "Nội dung demo tự xóa sau 10 phút nhe! ⏳"
     )
-    sent_ids.append(msg2.message_id)
-    bot = context.bot
-    asyncio.ensure_future(delete_after(bot, chat_id, sent_ids, 600))
+    sent_ids.append(notice.message_id)
+    asyncio.create_task(delete_after(context, chat_id, sent_ids, 600))
+
+async def delete_after(context, chat_id, message_ids, delay):
+    await asyncio.sleep(delay)
+    for mid in message_ids:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception as e:
+            logging.error(f"Delete error: {e}")
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⏰ Demo đã hết hạn rồi Ní ơi!\n\n"
+                 "Vào kênh để chọn link mới nhé:\n"
+                 "👉 " + CHANNEL_LINK
+        )
+    except Exception as e:
+        logging.error(f"Notify error: {e}")
 
 async def new_album(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -205,30 +216,39 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2. Forward video/ảnh vào bot\n"
         "3. /done — Lấy link chia sẻ\n"
         "4. /list — Xem tất cả album\n"
-        "5. /del_album <key> — Xóa album"
+        "5. /del_album <key> — Xóa album\n\n"
+        "Demo tự xóa sau 10 phút!"
     )
 
-async def post_init(application):
-    await application.bot.delete_webhook(drop_pending_updates=True)
-    logging.info("Demo bot started!")
+def run_bot():
+    while True:
+        try:
+            force_delete_webhook()
+            app = Application.builder().token(TOKEN).build()
+            app.add_handler(CommandHandler("start", start))
+            app.add_handler(CommandHandler("new_album", new_album))
+            app.add_handler(CommandHandler("done", done))
+            app.add_handler(CommandHandler("list", list_albums))
+            app.add_handler(CommandHandler("del_album", delete_album))
+            app.add_handler(CommandHandler("help", help_cmd))
+            app.add_handler(MessageHandler(filters.VIDEO | filters.PHOTO, handle_media))
+            logging.info("✅ Demo bot started!")
+            app.run_polling(drop_pending_updates=True)
+        except Exception as e:
+            logging.error(f"Bot crashed: {e} — restarting in 10s...")
+            time.sleep(10)
 
 def main():
-    threading.Thread(target=run_health_server, daemon=True).start()
-    app = Application.builder()\
-        .token(TOKEN)\
-        .post_init(post_init)\
-        .connect_timeout(30)\
-        .read_timeout(30)\
-        .write_timeout(30)\
-        .build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("new_album", new_album))
-    app.add_handler(CommandHandler("done", done))
-    app.add_handler(CommandHandler("list", list_albums))
-    app.add_handler(CommandHandler("del_album", delete_album))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(MessageHandler(filters.VIDEO | filters.PHOTO, handle_media))
-    app.run_polling(drop_pending_updates=True)
+    t = threading.Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+    run_bot()
 
 if __name__ == "__main__":
     main()
+Và requirements.txt cập nhật thêm:
+python-telegram-bot==21.3
+motor==3.5.1
+pymongo==4.6.1
+flask==3.0.0
+requests==2.31.0
