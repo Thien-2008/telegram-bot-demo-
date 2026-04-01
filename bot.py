@@ -1,4 +1,4 @@
-# v3.0 DEMO BOT - Ultra fix
+# v4.0 DEMO BOT
 import os
 import asyncio
 import random
@@ -224,6 +224,8 @@ def run_bot():
     while True:
         try:
             force_delete_webhook()
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             app = Application.builder().token(TOKEN).build()
             app.add_handler(CommandHandler("start", start))
             app.add_handler(CommandHandler("new_album", new_album))
